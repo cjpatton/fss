@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use aes::{
     cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit},
     Aes128,
