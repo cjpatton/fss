@@ -19,7 +19,7 @@ impl Distribution<Seed> for Standard {
 }
 
 impl Seed {
-    fn expand(&self) -> ExpandedSeed {
+    fn extend(&self) -> ExtendedSeed {
         let key = GenericArray::from(self.0);
         let cipher = Aes128::new(&key);
         let mut blocks = [GenericArray::from([0; 16]), GenericArray::from([1; 16])];
@@ -29,7 +29,7 @@ impl Seed {
         let b1 = if s1[0] & 0x01 == 1 { true } else { false };
         s0[0] &= 0xFE;
         s1[0] &= 0xFE;
-        ExpandedSeed {
+        ExtendedSeed {
             s: [Seed(s0.into()), Seed(s1.into())],
             b: [b0, b1],
         }
@@ -57,12 +57,12 @@ impl std::ops::BitXorAssign<Seed> for Seed {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct ExpandedSeed {
+struct ExtendedSeed {
     s: [Seed; 2],
     b: [bool; 2],
 }
 
-impl ExpandedSeed {
+impl ExtendedSeed {
     fn correct_with(&mut self, cw: &CorrectionWord) {
         self.s[0] ^= cw.s;
         self.b[0] ^= cw.b[0];
@@ -87,16 +87,21 @@ fn gen(alpha: &[bool]) -> (Vec<CorrectionWord>, [Seed; 2]) {
     let k1 = rng.gen::<Seed>();
     let mut s0 = k0;
     let mut s1 = k1;
+    let mut b = true;
     let mut correction_words = Vec::with_capacity(alpha.len());
-    for a in alpha.iter().copied().map(usize::from) {
-        let e0 = s0.expand();
-        let e1 = s1.expand();
-        s0 = e0.s[a];
-        s1 = e1.s[a];
-        correction_words.push(CorrectionWord {
-            s: e0.s[1 - a] ^ e1.s[1 - a],
-            b: [e0.b[1 - a] ^ e1.b[1 - a], !(e0.b[1 - a] ^ e1.b[1 - a])],
-        });
+    for bit in alpha.iter().copied() {
+        let e0 = s0.extend();
+        let e1 = s1.extend();
+        let keep = usize::from(bit);
+        let lose = 1 - keep;
+        s0 = e0.s[keep];
+        s1 = e1.s[keep];
+        let cw = CorrectionWord {
+            s: e0.s[lose] ^ e1.s[lose],
+            b: [e0.b[0] ^ e1.b[0], !b ^ e0.b[1] ^ e1.b[1]],
+        };
+        b = cw.b[1];
+        correction_words.push(cw);
     }
     (correction_words, [k0, k1])
 }
@@ -110,7 +115,7 @@ fn eval(correction_words: &[CorrectionWord], k: &Seed, id: bool, alpha: &[bool])
         .iter()
         .zip(alpha.iter().copied().map(usize::from))
     {
-        let mut e = s.expand();
+        let mut e = s.extend();
         if b {
             e.correct_with(cw);
         }
@@ -127,7 +132,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let alpha = thread_rng().gen::<[bool; 1]>().to_vec();
+        let alpha = thread_rng().gen::<[bool; 10]>().to_vec();
         let (cw, [s0, s1]) = gen(&alpha);
 
         // on path
@@ -135,7 +140,6 @@ mod tests {
             let s0 = eval(&cw, &s0, false, &alpha);
             let s1 = eval(&cw, &s1, true, &alpha);
             assert_ne!(s0, s1);
-            println!("on path {:?}, {:?}", s0, s1);
         }
 
         // off path
@@ -144,7 +148,6 @@ mod tests {
             let s0 = eval(&cw, &s0, false, &off_path);
             let s1 = eval(&cw, &s1, true, &off_path);
             assert_eq!(s0, s1);
-            println!("off path {:?}", s0);
         }
     }
 }
