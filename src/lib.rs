@@ -122,6 +122,7 @@ mod tests {
             let s0 = eval(&cw, &s0, false, alpha);
             let s1 = eval(&cw, &s1, true, alpha);
             assert_ne!(s0, s1);
+            println!("on path {:?}, {:?}", s0, s1);
         }
 
         // off path
@@ -129,6 +130,7 @@ mod tests {
             let s0 = eval(&cw, &s0, false, !alpha);
             let s1 = eval(&cw, &s1, true, !alpha);
             assert_eq!(s0, s1);
+            println!("off path {:?}", s0);
         }
     }
 }
