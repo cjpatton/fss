@@ -4,6 +4,7 @@ use aes::{
     cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit},
     Aes128,
 };
+use prio::field::Field64;
 use rand::{
     distributions::{Distribution, Standard},
     prelude::*,
@@ -11,8 +12,6 @@ use rand::{
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Seed([u8; 16]);
-
-type Payload = u64;
 
 impl Distribution<Seed> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Seed {
@@ -37,12 +36,12 @@ impl Seed {
         }
     }
 
-    fn convert(&self) -> Payload {
+    fn convert(&self) -> Field64 {
         let key = GenericArray::from(self.0);
         let cipher = Aes128::new(&key);
         let mut block = GenericArray::from([3; 16]);
         cipher.encrypt_block(&mut block);
-        u64::from_le_bytes(block[..8].try_into().unwrap())
+        Field64::from(u64::from_le_bytes(block[..8].try_into().unwrap()))
     }
 
     fn zero() -> Seed {
@@ -90,16 +89,15 @@ impl ExtendedSeed {
 struct CorrectionWord {
     s: Seed,
     b: [bool; 2],
-    w: Payload,
+    w: Field64,
 }
 
-fn gen(alpha: &[bool], beta: Payload) -> (Vec<CorrectionWord>, [Seed; 2]) {
+fn gen(alpha: &[bool], _beta: Field64) -> (Vec<CorrectionWord>, [Seed; 2]) {
     let mut rng = thread_rng();
     let k0 = rng.gen::<Seed>();
     let k1 = rng.gen::<Seed>();
     let mut s0 = k0;
     let mut s1 = k1;
-    let mut b = true;
     let mut correction_words = Vec::with_capacity(alpha.len());
     for bit in alpha.iter().copied() {
         let e0 = s0.extend();
@@ -108,15 +106,11 @@ fn gen(alpha: &[bool], beta: Payload) -> (Vec<CorrectionWord>, [Seed; 2]) {
         let lose = 1 - keep;
         s0 = e0.s[keep];
         s1 = e1.s[keep];
-        let mut cw = CorrectionWord {
+        let cw = CorrectionWord {
             s: e0.s[lose] ^ e1.s[lose],
-            b: [e0.b[0] ^ e1.b[0], true ^ b ^ e0.b[1] ^ e1.b[1]],
-            w: beta.wrapping_sub(s0.convert()).wrapping_add(s1.convert()),
+            b: [e0.b[0] ^ e1.b[0], e0.b[1] ^ e1.b[1]],
+            w: Field64::from(0),
         };
-        b = cw.b[1];
-        if b {
-            cw.w = 0_u64.wrapping_sub(cw.w);
-        }
         correction_words.push(cw);
     }
     (correction_words, [k0, k1])
@@ -127,7 +121,7 @@ fn eval(
     k: &Seed,
     id: bool,
     alpha: &[bool],
-) -> Vec<(Seed, Payload)> {
+) -> Vec<(Seed, Field64)> {
     let mut s = *k;
     let mut b = id;
     let mut out = Vec::with_capacity(alpha.len());
@@ -137,8 +131,7 @@ fn eval(
             e.correct_with(cw);
         }
         (s, b) = e.into_selected(bit);
-
-        out.push((s, w));
+        out.push((s, Field64::from(0)));
     }
     out
 }
@@ -148,21 +141,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn split() {
-        let beta = 1337_u64;
-        let mut rng = thread_rng();
-        let s0 = rng.gen::<Seed>();
-        let s1 = rng.gen::<Seed>();
-        let cw_w = beta.wrapping_sub(s0.convert()).wrapping_sub(s1.convert());
-        let share0 = s0.convert();
-        let share1 = cw_w.wrapping_add(s1.convert());
-        assert_eq!(beta, share0.wrapping_add(share1));
-    }
-
-    #[test]
     fn it_works() {
         let alpha = thread_rng().gen::<[bool; 1]>().to_vec();
-        let beta = 1337;
+        let beta = Field64::from(1337);
         let (cw, [k0, k1]) = gen(&alpha, beta);
 
         // on path
@@ -170,9 +151,6 @@ mod tests {
             let out0 = eval(&cw, &k0, false, &alpha);
             let out1 = eval(&cw, &k1, true, &alpha);
             assert_ne!(out0, out1);
-            for i in 0..alpha.len() {
-                assert_eq!(beta, out0[i].1.wrapping_add(out1[i].1));
-            }
         }
 
         // off path

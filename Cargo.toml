@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 aes = "0.8.4"
+prio = "0.16.6"
 rand = "0.8.5"
