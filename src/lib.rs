@@ -90,15 +90,16 @@ impl ExtendedSeed {
 struct CorrectionWord {
     s: Seed,
     b: [bool; 2],
-    p: Payload,
+    w: Payload,
 }
 
-fn gen(alpha: &[bool]) -> (Vec<CorrectionWord>, [Seed; 2]) {
+fn gen(alpha: &[bool], beta: Payload) -> (Vec<CorrectionWord>, [Seed; 2]) {
     let mut rng = thread_rng();
     let k0 = rng.gen::<Seed>();
     let k1 = rng.gen::<Seed>();
     let mut s0 = k0;
     let mut s1 = k1;
+    let mut b = true;
     let mut correction_words = Vec::with_capacity(alpha.len());
     for bit in alpha.iter().copied() {
         let e0 = s0.extend();
@@ -107,31 +108,39 @@ fn gen(alpha: &[bool]) -> (Vec<CorrectionWord>, [Seed; 2]) {
         let lose = 1 - keep;
         s0 = e0.s[keep];
         s1 = e1.s[keep];
-        let cw = CorrectionWord {
+        let mut cw = CorrectionWord {
             s: e0.s[lose] ^ e1.s[lose],
-            b: [e0.b[0] ^ e1.b[0], e0.b[1] ^ e1.b[1]],
-            p: todo!(),
+            b: [e0.b[0] ^ e1.b[0], true ^ b ^ e0.b[1] ^ e1.b[1]],
+            w: beta.wrapping_sub(s0.convert()).wrapping_add(s1.convert()),
         };
+        b = cw.b[1];
+        if b {
+            cw.w = 0_u64.wrapping_sub(cw.w);
+        }
         correction_words.push(cw);
     }
     (correction_words, [k0, k1])
 }
 
-fn eval(correction_words: &[CorrectionWord], k: &Seed, id: bool, alpha: &[bool]) -> Vec<Seed> {
+fn eval(
+    correction_words: &[CorrectionWord],
+    k: &Seed,
+    id: bool,
+    alpha: &[bool],
+) -> Vec<(Seed, Payload)> {
     let mut s = *k;
     let mut b = id;
-
-    let mut seeds = Vec::with_capacity(alpha.len());
+    let mut out = Vec::with_capacity(alpha.len());
     for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
         let mut e = s.extend();
         if b {
             e.correct_with(cw);
         }
         (s, b) = e.into_selected(bit);
-        seeds.push(s);
-    }
 
-    seeds
+        out.push((s, w));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -139,23 +148,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn split() {
+        let beta = 1337_u64;
+        let mut rng = thread_rng();
+        let s0 = rng.gen::<Seed>();
+        let s1 = rng.gen::<Seed>();
+        let cw_w = beta.wrapping_sub(s0.convert()).wrapping_sub(s1.convert());
+        let share0 = s0.convert();
+        let share1 = cw_w.wrapping_add(s1.convert());
+        assert_eq!(beta, share0.wrapping_add(share1));
+    }
+
+    #[test]
     fn it_works() {
-        let alpha = thread_rng().gen::<[bool; 10]>().to_vec();
-        let (cw, [s0, s1]) = gen(&alpha);
+        let alpha = thread_rng().gen::<[bool; 1]>().to_vec();
+        let beta = 1337;
+        let (cw, [k0, k1]) = gen(&alpha, beta);
 
         // on path
         {
-            let s0 = eval(&cw, &s0, false, &alpha);
-            let s1 = eval(&cw, &s1, true, &alpha);
-            assert_ne!(s0, s1);
+            let out0 = eval(&cw, &k0, false, &alpha);
+            let out1 = eval(&cw, &k1, true, &alpha);
+            assert_ne!(out0, out1);
+            for i in 0..alpha.len() {
+                assert_eq!(beta, out0[i].1.wrapping_add(out1[i].1));
+            }
         }
 
         // off path
         {
             let off_path = alpha.into_iter().map(|bit| !bit).collect::<Vec<_>>();
-            let s0 = eval(&cw, &s0, false, &off_path);
-            let s1 = eval(&cw, &s1, true, &off_path);
-            assert_eq!(s0, s1);
+            let out0 = eval(&cw, &k0, false, &off_path);
+            let out1 = eval(&cw, &k1, true, &off_path);
+            assert_eq!(out0, out1);
         }
     }
 }
