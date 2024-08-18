@@ -70,8 +70,9 @@ impl ExpandedSeed {
         self.b[1] ^= cw.b[1];
     }
 
-    fn into_selected(self, alpha: bool) -> Seed {
-        todo!();
+    fn into_selected(self, alpha: bool) -> (Seed, bool) {
+        let a = alpha as usize;
+        (self.s[a], self.b[a])
     }
 }
 
@@ -87,7 +88,7 @@ fn gen(alpha: bool) -> (CorrectionWord, [Seed; 2]) {
     let s1 = rng.gen::<Seed>();
     let e0 = s0.expand();
     let e1 = s1.expand();
-    let a = alpha as usize;
+    let a = !alpha as usize;
     let cw = CorrectionWord {
         s: e0.s[a] ^ e1.s[a],
         b: [e0.b[a] ^ e1.b[a], !(e0.b[a] ^ e1.b[a])],
@@ -101,11 +102,8 @@ fn eval(cw: &CorrectionWord, s: &Seed, b: bool, alpha: bool) -> Seed {
         e.correct_with(cw);
     }
 
-    if alpha {
-        e.s[0]
-    } else {
-        e.s[1]
-    }
+    let (s, _b) = e.into_selected(alpha);
+    s
 }
 
 #[cfg(test)]
