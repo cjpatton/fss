@@ -87,9 +87,10 @@ fn gen(alpha: bool) -> (CorrectionWord, [Seed; 2]) {
     let s1 = rng.gen::<Seed>();
     let e0 = s0.expand();
     let e1 = s1.expand();
+    let a = alpha as usize;
     let cw = CorrectionWord {
-        s: e0.s[0] ^ e1.s[0],
-        b: [!alpha ^ e0.b[0] ^ e1.b[0], alpha ^ (e0.b[1] ^ e1.b[1])],
+        s: e0.s[a] ^ e1.s[a],
+        b: [e0.b[a] ^ e1.b[a], !(e0.b[a] ^ e1.b[a])],
     };
     (cw, [s0, s1])
 }
@@ -99,7 +100,12 @@ fn eval(cw: &CorrectionWord, s: &Seed, b: bool, alpha: bool) -> Seed {
     if b {
         e.correct_with(cw);
     }
-    todo!()
+
+    if alpha {
+        e.s[0]
+    } else {
+        e.s[1]
+    }
 }
 
 #[cfg(test)]
