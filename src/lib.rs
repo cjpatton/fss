@@ -63,11 +63,15 @@ struct ExpandedSeed {
 }
 
 impl ExpandedSeed {
-    fn correct(&mut self, cw: &CorrectionWord) {
+    fn correct_with(&mut self, cw: &CorrectionWord) {
         self.s[0] ^= cw.s;
         self.b[0] ^= cw.b[0];
         self.s[1] ^= cw.s;
         self.b[1] ^= cw.b[1];
+    }
+
+    fn into_selected(self, alpha: bool) -> Seed {
+        todo!();
     }
 }
 
@@ -85,17 +89,17 @@ fn gen(alpha: bool) -> (CorrectionWord, [Seed; 2]) {
     let e1 = s1.expand();
     let cw = CorrectionWord {
         s: e0.s[0] ^ e1.s[0],
-        b: [e0.b[0] ^ e1.b[0], !(e0.b[1] ^ e1.b[1])],
+        b: [!alpha ^ e0.b[0] ^ e1.b[0], alpha ^ (e0.b[1] ^ e1.b[1])],
     };
     (cw, [s0, s1])
 }
 
-fn eval(cw: &CorrectionWord, s: &Seed, b: bool) -> ExpandedSeed {
+fn eval(cw: &CorrectionWord, s: &Seed, b: bool, alpha: bool) -> Seed {
     let mut e = s.expand();
     if b {
-        e.correct(cw);
+        e.correct_with(cw);
     }
-    e
+    todo!()
 }
 
 #[cfg(test)]
@@ -104,12 +108,21 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let (cw, [s0, s1]) = gen(thread_rng().gen());
-        let e0 = eval(&cw, &s0, false);
-        let e1 = eval(&cw, &s1, true);
-        assert_eq!(Seed::zero(), e0.s[0] ^ e1.s[0]);
-        assert_eq!(false, e0.b[0] ^ e1.b[0]);
-        assert_eq!(e0.s[0] ^ e0.s[1] ^ e1.s[0] ^ e1.s[1], e0.s[1] ^ e1.s[1]);
-        assert_eq!(true, e0.b[1] ^ e1.b[1]);
+        let alpha = thread_rng().gen();
+        let (cw, [s0, s1]) = gen(alpha);
+
+        // on path
+        {
+            let s0 = eval(&cw, &s0, false, alpha);
+            let s1 = eval(&cw, &s1, true, alpha);
+            assert_ne!(s0, s1);
+        }
+
+        // off path
+        {
+            let s0 = eval(&cw, &s0, false, !alpha);
+            let s1 = eval(&cw, &s1, true, !alpha);
+            assert_eq!(s0, s1);
+        }
     }
 }
