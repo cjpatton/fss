@@ -70,8 +70,7 @@ impl ExpandedSeed {
         self.b[1] ^= cw.b[1];
     }
 
-    fn into_selected(self, alpha: bool) -> (Seed, bool) {
-        let a = alpha as usize;
+    fn into_selected(self, a: usize) -> (Seed, bool) {
         (self.s[a], self.b[a])
     }
 }
@@ -82,28 +81,44 @@ struct CorrectionWord {
     b: [bool; 2],
 }
 
-fn gen(alpha: bool) -> (CorrectionWord, [Seed; 2]) {
+fn gen(alpha: &[bool]) -> (Vec<CorrectionWord>, [Seed; 2]) {
     let mut rng = thread_rng();
-    let s0 = rng.gen::<Seed>();
-    let s1 = rng.gen::<Seed>();
-    let e0 = s0.expand();
-    let e1 = s1.expand();
-    let a = !alpha as usize;
-    let cw = CorrectionWord {
-        s: e0.s[a] ^ e1.s[a],
-        b: [e0.b[a] ^ e1.b[a], !(e0.b[a] ^ e1.b[a])],
-    };
-    (cw, [s0, s1])
+    let k0 = rng.gen::<Seed>();
+    let k1 = rng.gen::<Seed>();
+    let mut s0 = k0;
+    let mut s1 = k1;
+    let mut correction_words = Vec::with_capacity(alpha.len());
+    for a in alpha.iter().copied().map(usize::from) {
+        let e0 = s0.expand();
+        let e1 = s1.expand();
+        s0 = e0.s[a];
+        s1 = e1.s[a];
+        correction_words.push(CorrectionWord {
+            s: e0.s[1 - a] ^ e1.s[1 - a],
+            b: [e0.b[1 - a] ^ e1.b[1 - a], !(e0.b[1 - a] ^ e1.b[1 - a])],
+        });
+    }
+    (correction_words, [k0, k1])
 }
 
-fn eval(cw: &CorrectionWord, s: &Seed, b: bool, alpha: bool) -> Seed {
-    let mut e = s.expand();
-    if b {
-        e.correct_with(cw);
+fn eval(correction_words: &[CorrectionWord], k: &Seed, id: bool, alpha: &[bool]) -> Vec<Seed> {
+    let mut s = *k;
+    let mut b = id;
+
+    let mut seeds = Vec::with_capacity(alpha.len());
+    for (cw, a) in correction_words
+        .iter()
+        .zip(alpha.iter().copied().map(usize::from))
+    {
+        let mut e = s.expand();
+        if b {
+            e.correct_with(cw);
+        }
+        (s, b) = e.into_selected(a);
+        seeds.push(s);
     }
 
-    let (s, _b) = e.into_selected(alpha);
-    s
+    seeds
 }
 
 #[cfg(test)]
@@ -112,21 +127,22 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let alpha = thread_rng().gen();
-        let (cw, [s0, s1]) = gen(alpha);
+        let alpha = thread_rng().gen::<[bool; 1]>().to_vec();
+        let (cw, [s0, s1]) = gen(&alpha);
 
         // on path
         {
-            let s0 = eval(&cw, &s0, false, alpha);
-            let s1 = eval(&cw, &s1, true, alpha);
+            let s0 = eval(&cw, &s0, false, &alpha);
+            let s1 = eval(&cw, &s1, true, &alpha);
             assert_ne!(s0, s1);
             println!("on path {:?}, {:?}", s0, s1);
         }
 
         // off path
         {
-            let s0 = eval(&cw, &s0, false, !alpha);
-            let s1 = eval(&cw, &s1, true, !alpha);
+            let off_path = alpha.into_iter().map(|bit| !bit).collect::<Vec<_>>();
+            let s0 = eval(&cw, &s0, false, &off_path);
+            let s1 = eval(&cw, &s1, true, &off_path);
             assert_eq!(s0, s1);
             println!("off path {:?}", s0);
         }
