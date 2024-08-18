@@ -12,6 +12,8 @@ use rand::{
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Seed([u8; 16]);
 
+type Payload = u64;
+
 impl Distribution<Seed> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Seed {
         Seed(rng.gen())
@@ -33,6 +35,14 @@ impl Seed {
             s: [Seed(s0.into()), Seed(s1.into())],
             b: [b0, b1],
         }
+    }
+
+    fn convert(&self) -> Payload {
+        let key = GenericArray::from(self.0);
+        let cipher = Aes128::new(&key);
+        let mut block = GenericArray::from([3; 16]);
+        cipher.encrypt_block(&mut block);
+        u64::from_le_bytes(block[..8].try_into().unwrap())
     }
 
     fn zero() -> Seed {
@@ -70,8 +80,9 @@ impl ExtendedSeed {
         self.b[1] ^= cw.b[1];
     }
 
-    fn into_selected(self, a: usize) -> (Seed, bool) {
-        (self.s[a], self.b[a])
+    fn into_selected(self, bit: bool) -> (Seed, bool) {
+        let bit = bit as usize;
+        (self.s[bit], self.b[bit])
     }
 }
 
@@ -79,6 +90,7 @@ impl ExtendedSeed {
 struct CorrectionWord {
     s: Seed,
     b: [bool; 2],
+    p: Payload,
 }
 
 fn gen(alpha: &[bool]) -> (Vec<CorrectionWord>, [Seed; 2]) {
@@ -87,7 +99,6 @@ fn gen(alpha: &[bool]) -> (Vec<CorrectionWord>, [Seed; 2]) {
     let k1 = rng.gen::<Seed>();
     let mut s0 = k0;
     let mut s1 = k1;
-    let mut b = true;
     let mut correction_words = Vec::with_capacity(alpha.len());
     for bit in alpha.iter().copied() {
         let e0 = s0.extend();
@@ -98,9 +109,9 @@ fn gen(alpha: &[bool]) -> (Vec<CorrectionWord>, [Seed; 2]) {
         s1 = e1.s[keep];
         let cw = CorrectionWord {
             s: e0.s[lose] ^ e1.s[lose],
-            b: [e0.b[0] ^ e1.b[0], !b ^ e0.b[1] ^ e1.b[1]],
+            b: [e0.b[0] ^ e1.b[0], e0.b[1] ^ e1.b[1]],
+            p: todo!(),
         };
-        b = cw.b[1];
         correction_words.push(cw);
     }
     (correction_words, [k0, k1])
@@ -111,15 +122,12 @@ fn eval(correction_words: &[CorrectionWord], k: &Seed, id: bool, alpha: &[bool])
     let mut b = id;
 
     let mut seeds = Vec::with_capacity(alpha.len());
-    for (cw, a) in correction_words
-        .iter()
-        .zip(alpha.iter().copied().map(usize::from))
-    {
+    for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
         let mut e = s.extend();
         if b {
             e.correct_with(cw);
         }
-        (s, b) = e.into_selected(a);
+        (s, b) = e.into_selected(bit);
         seeds.push(s);
     }
 
