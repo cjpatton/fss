@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let alpha = thread_rng().gen::<[bool; 1]>().to_vec();
+        let alpha = thread_rng().gen::<[bool; 10]>().to_vec();
         let beta = Field64::from(1337);
         let (cw, [k0, k1]) = gen(&alpha, beta);
 
