@@ -20,10 +20,16 @@ impl Distribution<Seed> for Standard {
 }
 
 impl Seed {
+    // Normally this would be derived from a random nonce chosen by the client.
+    const FIXED_KEY: [u8; 16] = [
+        0xDC, 0xD6, 0x6F, 0x54, 0xFD, 0xB4, 0xF4, 0xB8, 0x9A, 0xCE, 0xA6, 0xF9, 0xBB, 0xDB, 0xAD,
+        0xC0,
+    ];
+
     fn extend(&self) -> ExtendedSeed {
-        let key = GenericArray::from(self.0);
-        let cipher = Aes128::new(&key);
-        let mut blocks = [GenericArray::from([0; 16]), GenericArray::from([1; 16])];
+        let cipher = Aes128::new(&GenericArray::from(Seed::FIXED_KEY));
+        let mut blocks = [GenericArray::from(self.0), GenericArray::from(self.0)];
+        blocks[1][0] ^= 1;
         cipher.encrypt_blocks(&mut blocks);
         let [mut s0, mut s1] = blocks;
         let b0 = if s0[0] & 0x01 == 1 { true } else { false };
@@ -37,9 +43,9 @@ impl Seed {
     }
 
     fn convert(&self) -> Field64 {
-        let key = GenericArray::from(self.0);
-        let cipher = Aes128::new(&key);
-        let mut block = GenericArray::from([3; 16]);
+        let cipher = Aes128::new(&GenericArray::from(Seed::FIXED_KEY));
+        let mut block = GenericArray::from(self.0);
+        block[0] ^= 2;
         cipher.encrypt_block(&mut block);
         Field64::from(u64::from_le_bytes(block[..8].try_into().unwrap()))
     }
