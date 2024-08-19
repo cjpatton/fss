@@ -131,7 +131,7 @@ impl Idpf {
         k: &Seed,
         id: bool,
         alpha: &[bool],
-    ) -> Seed {
+    ) -> (Seed, Field64) {
         let mut s = *k;
         let mut b = id;
         for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
@@ -141,7 +141,7 @@ impl Idpf {
             }
             (s, b) = e.into_selected(bit);
         }
-        s
+        (s, Field64::from(0))
     }
 }
 
@@ -164,9 +164,9 @@ mod tests {
         // on path
         {
             for i in 1..alpha.len() {
-                let out0 = idpf.eval(&cw, &k0, false, &alpha[..i]);
-                let out1 = idpf.eval(&cw, &k1, true, &alpha[..i]);
-                assert_ne!(out0, out1);
+                let (s0, _w0) = idpf.eval(&cw, &k0, false, &alpha[..i]);
+                let (s1, _w1) = idpf.eval(&cw, &k1, true, &alpha[..i]);
+                assert_ne!(s0, s1);
             }
         }
 
@@ -174,9 +174,9 @@ mod tests {
         {
             let off_path = alpha.into_iter().map(|bit| !bit).collect::<Vec<_>>();
             for i in 1..off_path.len() {
-                let out0 = idpf.eval(&cw, &k0, false, &off_path[..i]);
-                let out1 = idpf.eval(&cw, &k1, true, &off_path[..i]);
-                assert_eq!(out0, out1);
+                let (s0, _w0) = idpf.eval(&cw, &k0, false, &off_path[..i]);
+                let (s1, _w1) = idpf.eval(&cw, &k1, true, &off_path[..i]);
+                assert_eq!(s0, s1);
             }
         }
     }
