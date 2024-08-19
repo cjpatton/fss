@@ -115,8 +115,6 @@ impl Idpf {
             let mut e1 = s1.extend(&self.cipher);
             let keep = usize::from(bit);
             let lose = 1 - keep;
-            s0 = e0.s[keep];
-            s1 = e1.s[keep];
             let mut cw = CorrectionWord {
                 s: e0.s[lose] ^ e1.s[lose],
                 b: [!bit ^ e0.b[0] ^ e1.b[0], bit ^ e0.b[1] ^ e1.b[1]],
@@ -134,6 +132,8 @@ impl Idpf {
                 e0.s[keep].convert(&self.cipher),
                 e1.s[keep].convert(&self.cipher)
             );
+            s0 = e0.s[keep];
+            s1 = e1.s[keep];
             b0 = e0.b[keep];
             b1 = e1.b[keep];
 
@@ -177,7 +177,7 @@ mod tests {
             0xAD, 0xC0,
         ]);
 
-        let alpha = thread_rng().gen::<[bool; 2]>().to_vec();
+        let alpha = thread_rng().gen::<[bool; 10]>().to_vec();
         let beta = Field64::from(1337);
         let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
 
