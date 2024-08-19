@@ -20,14 +20,7 @@ impl Distribution<Seed> for Standard {
 }
 
 impl Seed {
-    // Normally this would be derived from a random nonce chosen by the client.
-    const FIXED_KEY: [u8; 16] = [
-        0xDC, 0xD6, 0x6F, 0x54, 0xFD, 0xB4, 0xF4, 0xB8, 0x9A, 0xCE, 0xA6, 0xF9, 0xBB, 0xDB, 0xAD,
-        0xC0,
-    ];
-
-    fn extend(&self) -> ExtendedSeed {
-        let cipher = Aes128::new(&GenericArray::from(Seed::FIXED_KEY));
+    fn extend(&self, cipher: &Aes128) -> ExtendedSeed {
         let mut blocks = [GenericArray::from(self.0), GenericArray::from(self.0)];
         blocks[0][0] ^= 0x01;
         blocks[1][0] ^= 0x02;
@@ -43,8 +36,7 @@ impl Seed {
         }
     }
 
-    fn convert(&self) -> Field64 {
-        let cipher = Aes128::new(&GenericArray::from(Seed::FIXED_KEY));
+    fn convert(&self, cipher: &Aes128) -> Field64 {
         let mut block = GenericArray::from(self.0);
         block[0] ^= 0x03;
         cipher.encrypt_block(&mut block);
@@ -98,41 +90,59 @@ struct CorrectionWord {
     w: Field64,
 }
 
-fn gen(alpha: &[bool], _beta: Field64) -> (Vec<CorrectionWord>, [Seed; 2]) {
-    let mut rng = thread_rng();
-    let k0 = rng.gen::<Seed>();
-    let k1 = rng.gen::<Seed>();
-    let mut s0 = k0;
-    let mut s1 = k1;
-    let mut correction_words = Vec::with_capacity(alpha.len());
-    for bit in alpha.iter().copied() {
-        let e0 = s0.extend();
-        let e1 = s1.extend();
-        let keep = usize::from(bit);
-        let lose = 1 - keep;
-        s0 = e0.s[keep];
-        s1 = e1.s[keep];
-        let cw = CorrectionWord {
-            s: e0.s[lose] ^ e1.s[lose],
-            b: [!bit ^ e0.b[0] ^ e1.b[0], bit ^ e0.b[1] ^ e1.b[1]],
-            w: Field64::from(0),
-        };
-        correction_words.push(cw);
-    }
-    (correction_words, [k0, k1])
+struct Idpf {
+    cipher: Aes128,
 }
 
-fn eval(correction_words: &[CorrectionWord], k: &Seed, id: bool, alpha: &[bool]) -> Seed {
-    let mut s = *k;
-    let mut b = id;
-    for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
-        let mut e = s.extend();
-        if b {
-            e.correct_with(cw);
+impl Idpf {
+    fn new(fixed_key: &[u8; 16]) -> Self {
+        Self {
+            cipher: Aes128::new(&GenericArray::from(*fixed_key)),
         }
-        (s, b) = e.into_selected(bit);
     }
-    s
+
+    fn gen(&self, alpha: &[bool], _beta: Field64) -> (Vec<CorrectionWord>, [Seed; 2]) {
+        let mut rng = thread_rng();
+        let k0 = rng.gen::<Seed>();
+        let k1 = rng.gen::<Seed>();
+        let mut s0 = k0;
+        let mut s1 = k1;
+        let mut correction_words = Vec::with_capacity(alpha.len());
+        for bit in alpha.iter().copied() {
+            let e0 = s0.extend(&self.cipher);
+            let e1 = s1.extend(&self.cipher);
+            let keep = usize::from(bit);
+            let lose = 1 - keep;
+            s0 = e0.s[keep];
+            s1 = e1.s[keep];
+            let cw = CorrectionWord {
+                s: e0.s[lose] ^ e1.s[lose],
+                b: [!bit ^ e0.b[0] ^ e1.b[0], bit ^ e0.b[1] ^ e1.b[1]],
+                w: Field64::from(0),
+            };
+            correction_words.push(cw);
+        }
+        (correction_words, [k0, k1])
+    }
+
+    fn eval(
+        &self,
+        correction_words: &[CorrectionWord],
+        k: &Seed,
+        id: bool,
+        alpha: &[bool],
+    ) -> Seed {
+        let mut s = *k;
+        let mut b = id;
+        for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
+            let mut e = s.extend(&self.cipher);
+            if b {
+                e.correct_with(cw);
+            }
+            (s, b) = e.into_selected(bit);
+        }
+        s
+    }
 }
 
 #[cfg(test)]
@@ -141,15 +151,21 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let alpha = thread_rng().gen::<[bool; 10]>().to_vec();
+        // Normally this would be derived from a random nonce chosen by the client.
+        let idpf = Idpf::new(&[
+            0xDC, 0xD6, 0x6F, 0x54, 0xFD, 0xB4, 0xF4, 0xB8, 0x9A, 0xCE, 0xA6, 0xF9, 0xBB, 0xDB,
+            0xAD, 0xC0,
+        ]);
+
+        let alpha = thread_rng().gen::<[bool; 32]>().to_vec();
         let beta = Field64::from(1337);
-        let (cw, [k0, k1]) = gen(&alpha, beta);
+        let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
 
         // on path
         {
             for i in 1..alpha.len() {
-                let out0 = eval(&cw, &k0, false, &alpha[..i]);
-                let out1 = eval(&cw, &k1, true, &alpha[..i]);
+                let out0 = idpf.eval(&cw, &k0, false, &alpha[..i]);
+                let out1 = idpf.eval(&cw, &k1, true, &alpha[..i]);
                 assert_ne!(out0, out1);
             }
         }
@@ -158,8 +174,8 @@ mod tests {
         {
             let off_path = alpha.into_iter().map(|bit| !bit).collect::<Vec<_>>();
             for i in 1..off_path.len() {
-                let out0 = eval(&cw, &k0, false, &off_path[..i]);
-                let out1 = eval(&cw, &k1, true, &off_path[..i]);
+                let out0 = idpf.eval(&cw, &k0, false, &off_path[..i]);
+                let out1 = idpf.eval(&cw, &k1, true, &off_path[..i]);
                 assert_eq!(out0, out1);
             }
         }
