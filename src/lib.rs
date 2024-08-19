@@ -29,7 +29,8 @@ impl Seed {
     fn extend(&self) -> ExtendedSeed {
         let cipher = Aes128::new(&GenericArray::from(Seed::FIXED_KEY));
         let mut blocks = [GenericArray::from(self.0), GenericArray::from(self.0)];
-        blocks[1][0] ^= 1;
+        blocks[0][0] ^= 0x01;
+        blocks[1][0] ^= 0x02;
         cipher.encrypt_blocks(&mut blocks);
         let [mut s0, mut s1] = blocks;
         let b0 = if s0[0] & 0x01 == 1 { true } else { false };
@@ -45,7 +46,7 @@ impl Seed {
     fn convert(&self) -> Field64 {
         let cipher = Aes128::new(&GenericArray::from(Seed::FIXED_KEY));
         let mut block = GenericArray::from(self.0);
-        block[0] ^= 2;
+        block[0] ^= 0x03;
         cipher.encrypt_block(&mut block);
         Field64::from(u64::from_le_bytes(block[..8].try_into().unwrap()))
     }
@@ -86,8 +87,7 @@ impl ExtendedSeed {
     }
 
     fn into_selected(self, bit: bool) -> (Seed, bool) {
-        let bit = bit as usize;
-        (self.s[bit], self.b[bit])
+        (self.s[bit as usize], self.b[bit as usize])
     }
 }
 
@@ -114,7 +114,7 @@ fn gen(alpha: &[bool], _beta: Field64) -> (Vec<CorrectionWord>, [Seed; 2]) {
         s1 = e1.s[keep];
         let cw = CorrectionWord {
             s: e0.s[lose] ^ e1.s[lose],
-            b: [e0.b[0] ^ e1.b[0], e0.b[1] ^ e1.b[1]],
+            b: [!bit ^ e0.b[0] ^ e1.b[0], bit ^ e0.b[1] ^ e1.b[1]],
             w: Field64::from(0),
         };
         correction_words.push(cw);
