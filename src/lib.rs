@@ -122,24 +122,17 @@ fn gen(alpha: &[bool], _beta: Field64) -> (Vec<CorrectionWord>, [Seed; 2]) {
     (correction_words, [k0, k1])
 }
 
-fn eval(
-    correction_words: &[CorrectionWord],
-    k: &Seed,
-    id: bool,
-    alpha: &[bool],
-) -> Vec<(Seed, Field64)> {
+fn eval(correction_words: &[CorrectionWord], k: &Seed, id: bool, alpha: &[bool]) -> Seed {
     let mut s = *k;
     let mut b = id;
-    let mut out = Vec::with_capacity(alpha.len());
     for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
         let mut e = s.extend();
         if b {
             e.correct_with(cw);
         }
         (s, b) = e.into_selected(bit);
-        out.push((s, Field64::from(0)));
     }
-    out
+    s
 }
 
 #[cfg(test)]
@@ -154,17 +147,21 @@ mod tests {
 
         // on path
         {
-            let out0 = eval(&cw, &k0, false, &alpha);
-            let out1 = eval(&cw, &k1, true, &alpha);
-            assert_ne!(out0, out1);
+            for i in 1..alpha.len() {
+                let out0 = eval(&cw, &k0, false, &alpha[..i]);
+                let out1 = eval(&cw, &k1, true, &alpha[..i]);
+                assert_ne!(out0, out1);
+            }
         }
 
         // off path
         {
             let off_path = alpha.into_iter().map(|bit| !bit).collect::<Vec<_>>();
-            let out0 = eval(&cw, &k0, false, &off_path);
-            let out1 = eval(&cw, &k1, true, &off_path);
-            assert_eq!(out0, out1);
+            for i in 1..off_path.len() {
+                let out0 = eval(&cw, &k0, false, &off_path[..i]);
+                let out1 = eval(&cw, &k1, true, &off_path[..i]);
+                assert_eq!(out0, out1);
+            }
         }
     }
 }
