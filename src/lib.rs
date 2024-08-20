@@ -119,6 +119,14 @@ impl Idpf {
         let mut b1 = true;
         let mut correction_words = Vec::with_capacity(alpha.len());
         for bit in alpha.iter().copied() {
+            // Selection maintains the following invariant, after correction:
+            //
+            // * If evaluation is on path, then the seed and control bit should be a pseudorandom
+            //   seed and `bit` respectively. The pseudorandom seed is the sum of the shares of the
+            //   seeds we're "losing" from the extended seed.
+            //
+            // * If evaluation is off path, then the seed and control bit should be equal to
+            //  `Seed::zero()` and `!bit` respectively.
             let mut e0 = s0.extend(&self.cipher);
             let mut e1 = s1.extend(&self.cipher);
             let keep = usize::from(bit);
@@ -126,9 +134,10 @@ impl Idpf {
             let mut cw = CorrectionWord {
                 s: e0.s[lose] ^ e1.s[lose],
                 b: [!bit ^ e0.b[0] ^ e1.b[0], bit ^ e0.b[1] ^ e1.b[1]],
-                w: F::zero(),
+                w: F::zero(), // computed in the next step
             };
 
+            // Correct and select the next seed and control bit.
             if b0 {
                 e0.correct_with(&cw);
             }
@@ -145,6 +154,11 @@ impl Idpf {
                 s1.convert::<F>(&self.cipher)
             );
 
+            // Conversion maintains the following invariant:
+            //
+            // * If evaluation is on path, XXX
+            //
+            // * If evaluation is off path, XXX
             cw.w = beta - s0.convert(&self.cipher) - s1.convert(&self.cipher);
             correction_words.push(cw);
         }
@@ -163,10 +177,11 @@ impl Idpf {
         let mut w = F::zero();
         for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
             let mut e = s.extend(&self.cipher);
-            w = F::zero();
             if b {
                 e.correct_with(cw);
-                w += cw.w;
+                w = cw.w;
+            } else {
+                w = F::zero();
             }
             (s, b) = e.into_selected(bit);
             w += s.convert(&self.cipher);
