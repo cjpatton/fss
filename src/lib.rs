@@ -4,7 +4,7 @@ use aes::{
     cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit},
     Aes128,
 };
-use prio::field::Field64;
+use prio::field::FieldElementWithInteger;
 use rand::{
     distributions::{Distribution, Standard},
     prelude::*,
@@ -36,11 +36,14 @@ impl Seed {
         }
     }
 
-    fn convert(&self, cipher: &Aes128) -> Field64 {
+    fn convert<F: FieldElementWithInteger>(&self, cipher: &Aes128) -> F {
         let mut block = GenericArray::from(self.0);
         block[0] ^= 0x03;
         cipher.encrypt_block(&mut block);
-        Field64::from(u64::from_le_bytes(block[..8].try_into().unwrap()))
+        F::from(
+            F::Integer::try_from(u64::from_le_bytes(block[..8].try_into().unwrap()) as usize)
+                .unwrap(),
+        )
     }
 
     fn zero() -> Seed {
@@ -71,7 +74,7 @@ struct ExtendedSeed {
 }
 
 impl ExtendedSeed {
-    fn correct_with(&mut self, cw: &CorrectionWord) {
+    fn correct_with<F>(&mut self, cw: &CorrectionWord<F>) {
         self.s[0] ^= cw.s;
         self.b[0] ^= cw.b[0];
         self.s[1] ^= cw.s;
@@ -84,10 +87,10 @@ impl ExtendedSeed {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct CorrectionWord {
+struct CorrectionWord<F> {
     s: Seed,
     b: [bool; 2],
-    w: Field64,
+    w: F,
 }
 
 struct Idpf {
@@ -101,7 +104,11 @@ impl Idpf {
         }
     }
 
-    fn gen(&self, alpha: &[bool], beta: Field64) -> (Vec<CorrectionWord>, [Seed; 2]) {
+    fn gen<F: FieldElementWithInteger>(
+        &self,
+        alpha: &[bool],
+        beta: F,
+    ) -> (Vec<CorrectionWord<F>>, [Seed; 2]) {
         let mut rng = thread_rng();
         let k0 = rng.gen::<Seed>();
         let k1 = rng.gen::<Seed>();
@@ -118,7 +125,7 @@ impl Idpf {
             let mut cw = CorrectionWord {
                 s: e0.s[lose] ^ e1.s[lose],
                 b: [!bit ^ e0.b[0] ^ e1.b[0], bit ^ e0.b[1] ^ e1.b[1]],
-                w: Field64::from(0),
+                w: F::zero(),
             };
 
             if b0 {
@@ -127,38 +134,41 @@ impl Idpf {
             if b1 {
                 e1.correct_with(&cw);
             }
-            println!(
-                "-{}\n-{}",
-                e0.s[keep].convert(&self.cipher),
-                e1.s[keep].convert(&self.cipher)
-            );
             s0 = e0.s[keep];
             s1 = e1.s[keep];
             b0 = e0.b[keep];
             b1 = e1.b[keep];
+            println!(
+                "-{}\n-{}",
+                s0.convert::<F>(&self.cipher),
+                s1.convert::<F>(&self.cipher)
+            );
 
+            cw.w = beta - s0.convert(&self.cipher) - s1.convert(&self.cipher);
             correction_words.push(cw);
         }
         (correction_words, [k0, k1])
     }
 
-    fn eval(
+    fn eval<F: FieldElementWithInteger>(
         &self,
-        correction_words: &[CorrectionWord],
+        correction_words: &[CorrectionWord<F>],
         k: &Seed,
         id: bool,
         alpha: &[bool],
-    ) -> (Seed, Field64) {
+    ) -> (Seed, F) {
         let mut s = *k;
         let mut b = id;
-        let mut w = Field64::from(0);
+        let mut w = F::zero();
         for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
             let mut e = s.extend(&self.cipher);
+            w = F::zero();
             if b {
                 e.correct_with(cw);
+                w += cw.w;
             }
             (s, b) = e.into_selected(bit);
-            w = s.convert(&self.cipher);
+            w += s.convert(&self.cipher);
         }
         println!(" {w}");
         (s, w)
@@ -168,6 +178,7 @@ impl Idpf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prio::field::Field64;
 
     #[test]
     fn it_works() {
@@ -186,9 +197,10 @@ mod tests {
         // on path
         {
             for i in 1..alpha.len() + 1 {
-                let (s0, _w0) = idpf.eval(&cw, &k0, false, &alpha[..i]);
-                let (s1, _w1) = idpf.eval(&cw, &k1, true, &alpha[..i]);
+                let (s0, w0) = idpf.eval(&cw, &k0, false, &alpha[..i]);
+                let (s1, w1) = idpf.eval(&cw, &k1, true, &alpha[..i]);
                 assert_ne!(s0, s1);
+                assert_eq!(beta, w0 + w1);
             }
         }
 
@@ -198,9 +210,10 @@ mod tests {
         {
             let off_path = alpha.into_iter().map(|bit| !bit).collect::<Vec<_>>();
             for i in 1..off_path.len() + 1 {
-                let (s0, _w0) = idpf.eval(&cw, &k0, false, &off_path[..i]);
-                let (s1, _w1) = idpf.eval(&cw, &k1, true, &off_path[..i]);
+                let (s0, w0) = idpf.eval(&cw, &k0, false, &off_path[..i]);
+                let (s1, w1) = idpf.eval(&cw, &k1, true, &off_path[..i]);
                 assert_eq!(s0, s1);
+                assert_eq!(Field64::from(0), w0 + w1);
             }
         }
     }
