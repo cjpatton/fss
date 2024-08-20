@@ -182,13 +182,12 @@ mod tests {
 
     #[test]
     fn it_works() {
-        // Normally this would be derived from a random nonce chosen by the client.
-        let idpf = Idpf::new(&[
-            0xDC, 0xD6, 0x6F, 0x54, 0xFD, 0xB4, 0xF4, 0xB8, 0x9A, 0xCE, 0xA6, 0xF9, 0xBB, 0xDB,
-            0xAD, 0xC0,
-        ]);
+        let mut rng = thread_rng();
 
-        let alpha = thread_rng().gen::<[bool; 10]>().to_vec();
+        // Normally this would be derived from a random nonce chosen by the client.
+        let idpf = Idpf::new(&rng.gen());
+
+        let alpha = rng.gen::<[bool; 10]>().to_vec();
         let beta = Field64::from(1337);
         let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
 
