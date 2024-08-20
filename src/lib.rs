@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code)] // TODO Delete this line
 
 use aes::{
     cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit},
