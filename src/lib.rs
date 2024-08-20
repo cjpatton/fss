@@ -37,6 +37,7 @@ impl Seed {
     }
 
     fn convert<F: FieldElementWithInteger>(&self, cipher: &Aes128) -> F {
+        // TODO Replace this with something secure.
         let mut block = GenericArray::from(self.0);
         block[0] ^= 0x03;
         cipher.encrypt_block(&mut block);
@@ -187,7 +188,7 @@ mod tests {
         // Normally this would be derived from a random nonce chosen by the client.
         let idpf = Idpf::new(&rng.gen());
 
-        let alpha = rng.gen::<[bool; 10]>().to_vec();
+        let alpha = rng.gen::<[bool; 2]>().to_vec();
         let beta = Field64::from(1337);
         let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
 
