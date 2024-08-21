@@ -34,7 +34,14 @@ impl Seed {
     }
 
     fn convert<F: FieldElementWithInteger>(&self, fixed_key: &XofFixedKeyAes128Key) -> F {
-        fixed_key.with_seed(&self.0).into_field_vec(1)[0]
+        // NOTE We tweak the seed so that the input blocks input to AES do not collide with the
+        // input blocks for `extend()`. This is an ugly hack that makes an assumption about how the
+        // XOF works. It probably shouldn't be copied.
+        //
+        // TODO Add a test that asserts the output of `extend()` doesn't overlap with `convert()`.
+        let mut seed = self.0.clone();
+        seed[15] ^= 1;
+        fixed_key.with_seed(&seed).into_field_vec(1)[0]
     }
 
     fn zero() -> Seed {
@@ -203,57 +210,69 @@ mod tests {
     use prio::field::Field64;
 
     #[test]
-    fn it_works() {
+    fn on_path() {
         let mut rng = thread_rng();
-
-        // Normally this would be derived from a random nonce chosen by the client.
         let idpf = Idpf::new(&rng.gen());
 
         let alpha = std::iter::repeat_with(|| rng.gen())
-            .take(20)
+            .take(137)
             .collect::<Vec<_>>();
         let beta = Field64::from(1337);
         let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
 
-        // on path
-        {
-            for i in 1..alpha.len() + 1 {
-                let (s0, w0) = idpf.eval(&cw, &k0, false, &alpha[..i]);
-                let (s1, w1) = idpf.eval(&cw, &k1, true, &alpha[..i]);
+        for i in 1..alpha.len() + 1 {
+            let (s0, w0) = idpf.eval(&cw, &k0, false, &alpha[..i]);
+            let (s1, w1) = idpf.eval(&cw, &k1, true, &alpha[..i]);
+            assert_ne!(s0, s1);
+            assert_eq!(beta, w0 + w1);
+        }
+    }
+
+    #[test]
+    fn off_path() {
+        let mut rng = thread_rng();
+        let idpf = Idpf::new(&rng.gen());
+        let alpha = std::iter::repeat_with(|| rng.gen())
+            .take(137)
+            .collect::<Vec<_>>();
+        let beta = Field64::from(1337);
+        let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
+
+        let path = alpha.iter().copied().map(|bit| !bit).collect::<Vec<_>>();
+        for i in 1..path.len() + 1 {
+            let (s0, w0) = idpf.eval(&cw, &k0, false, &path[..i]);
+            let (s1, w1) = idpf.eval(&cw, &k1, true, &path[..i]);
+            assert_eq!(s0, s1);
+            assert_eq!(Field64::from(0), w0 + w1);
+        }
+    }
+
+    #[test]
+    fn partial_path() {
+        let mut rng = thread_rng();
+        let idpf = Idpf::new(&rng.gen());
+        let alpha = std::iter::repeat_with(|| rng.gen())
+            .take(5)
+            .collect::<Vec<_>>();
+        let beta = Field64::from(1337);
+        let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
+
+        for j in 0..alpha.len() {
+            // on path until a certain level `j`
+            let mut path = alpha.clone();
+            path[j] = !path[j];
+            for i in 1..j + 1 {
+                let (s0, w0) = idpf.eval(&cw, &k0, false, &path[..i]);
+                let (s1, w1) = idpf.eval(&cw, &k1, true, &path[..i]);
                 assert_ne!(s0, s1);
                 assert_eq!(beta, w0 + w1);
             }
-        }
 
-        // off path
-        {
-            let path = alpha.iter().copied().map(|bit| !bit).collect::<Vec<_>>();
-            for i in 1..path.len() + 1 {
+            for i in j + 1..path.len() + 1 {
                 let (s0, w0) = idpf.eval(&cw, &k0, false, &path[..i]);
                 let (s1, w1) = idpf.eval(&cw, &k1, true, &path[..i]);
                 assert_eq!(s0, s1);
                 assert_eq!(Field64::from(0), w0 + w1);
-            }
-        }
-
-        // on path until a certain level `j`
-        {
-            for j in 0..alpha.len() {
-                let mut path = alpha.clone();
-                path[j] = !path[j];
-                for i in 1..j + 1 {
-                    let (s0, w0) = idpf.eval(&cw, &k0, false, &path[..i]);
-                    let (s1, w1) = idpf.eval(&cw, &k1, true, &path[..i]);
-                    assert_ne!(s0, s1);
-                    assert_eq!(beta, w0 + w1);
-                }
-
-                for i in j + 1..path.len() + 1 {
-                    let (s0, w0) = idpf.eval(&cw, &k0, false, &path[..i]);
-                    let (s1, w1) = idpf.eval(&cw, &k1, true, &path[..i]);
-                    assert_eq!(s0, s1);
-                    assert_eq!(Field64::from(0), w0 + w1);
-                }
             }
         }
     }
