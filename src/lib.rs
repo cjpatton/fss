@@ -161,10 +161,10 @@ impl Idpf {
             //
             // In either case, both servers will add a share. To make the on-path case work, have
             // server 0 add `w0` and server 1 add `-w1` so that `cw.w + w0 - w1` adds up to `beta`.
-            // To make the off-path case work, XXX
+            // In case we're off path and both servers add the correction word, we need one to add
+            // the negation.
             cw.w = beta - s0.convert(&self.cipher) + s1.convert(&self.cipher);
             if b1 {
-                // XXX Why
                 cw.w = -cw.w;
             }
             correction_words.push(cw);
@@ -181,7 +181,6 @@ impl Idpf {
     ) -> (Seed, F) {
         let mut s = *k;
         let mut b = id;
-        let mut w = F::zero();
         for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
             // Select the next seed and control bit.
             let mut e = s.extend(&self.cipher);
@@ -189,19 +188,20 @@ impl Idpf {
                 e.correct_with(cw);
             }
             (s, b) = e.into_selected(bit);
-
-            // XXX Figure out why this needs to be here and can't just be executed once.
-            w = if !id && !b {
-                s.convert::<F>(&self.cipher)
-            } else if !id && b {
-                cw.w + s.convert::<F>(&self.cipher)
-            } else if id && !b {
-                -s.convert::<F>(&self.cipher)
-            // id && b
-            } else {
-                -(cw.w + s.convert(&self.cipher))
-            };
         }
+
+        // Conversion.
+        let cw_w = correction_words[alpha.len() - 1].w;
+        let w = if !id && !b {
+            s.convert::<F>(&self.cipher)
+        } else if !id && b {
+            cw_w + s.convert::<F>(&self.cipher)
+        } else if id && !b {
+            -s.convert::<F>(&self.cipher)
+        // id && b
+        } else {
+            -(cw_w + s.convert(&self.cipher))
+        };
 
         (s, w)
     }
@@ -220,7 +220,7 @@ mod tests {
         let idpf = Idpf::new(&rng.gen());
 
         let alpha = std::iter::repeat_with(|| rng.gen())
-            .take(37)
+            .take(10)
             .collect::<Vec<_>>();
         let beta = Field64::from(1337);
         let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
@@ -237,15 +237,34 @@ mod tests {
 
         // off path
         {
-            let off_path = alpha.into_iter().map(|bit| !bit).collect::<Vec<_>>();
-            for i in 1..off_path.len() + 1 {
-                let (s0, w0) = idpf.eval(&cw, &k0, false, &off_path[..i]);
-                let (s1, w1) = idpf.eval(&cw, &k1, true, &off_path[..i]);
+            let path = alpha.iter().copied().map(|bit| !bit).collect::<Vec<_>>();
+            for i in 1..path.len() + 1 {
+                let (s0, w0) = idpf.eval(&cw, &k0, false, &path[..i]);
+                let (s1, w1) = idpf.eval(&cw, &k1, true, &path[..i]);
                 assert_eq!(s0, s1);
                 assert_eq!(Field64::from(0), w0 + w1);
             }
         }
 
-        // XXX Add test for on path then off path
+        // on path until a certain level `j`
+        {
+            for j in 0..alpha.len() {
+                let mut path = alpha.clone();
+                path[j] = !path[j];
+                for i in 1..j + 1 {
+                    let (s0, w0) = idpf.eval(&cw, &k0, false, &path[..i]);
+                    let (s1, w1) = idpf.eval(&cw, &k1, true, &path[..i]);
+                    assert_ne!(s0, s1);
+                    assert_eq!(beta, w0 + w1);
+                }
+
+                for i in j + 1..path.len() + 1 {
+                    let (s0, w0) = idpf.eval(&cw, &k0, false, &path[..i]);
+                    let (s1, w1) = idpf.eval(&cw, &k1, true, &path[..i]);
+                    assert_eq!(s0, s1);
+                    assert_eq!(Field64::from(0), w0 + w1);
+                }
+            }
+        }
     }
 }
