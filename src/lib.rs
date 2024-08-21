@@ -148,11 +148,6 @@ impl Idpf {
             s1 = e1.s[keep];
             b0 = e0.b[keep];
             b1 = e1.b[keep];
-            println!(
-                "-{}\n-{}",
-                s0.convert::<F>(&self.cipher),
-                s1.convert::<F>(&self.cipher)
-            );
 
             // Conversion works as follows:
             //
@@ -166,8 +161,12 @@ impl Idpf {
             //
             // In either case, both servers will add a share. To make the on-path case work, have
             // server 0 add `w0` and server 1 add `-w1` so that `cw.w + w0 - w1` adds up to `beta`.
-            // To make the off-path case work,
+            // To make the off-path case work, XXX
             cw.w = beta - s0.convert(&self.cipher) + s1.convert(&self.cipher);
+            if b1 {
+                // XXX Why
+                cw.w = -cw.w;
+            }
             correction_words.push(cw);
         }
         (correction_words, [k0, k1])
@@ -191,17 +190,19 @@ impl Idpf {
             }
             (s, b) = e.into_selected(bit);
 
+            // XXX Figure out why this needs to be here and can't just be executed once.
             w = if !id && !b {
-                s.convert(&self.cipher)
+                s.convert::<F>(&self.cipher)
             } else if !id && b {
                 cw.w + s.convert::<F>(&self.cipher)
             } else if id && !b {
                 -s.convert::<F>(&self.cipher)
+            // id && b
             } else {
-                cw.w - s.convert(&self.cipher)
+                -(cw.w + s.convert(&self.cipher))
             };
         }
-        println!("{b}");
+
         (s, w)
     }
 }
@@ -218,11 +219,11 @@ mod tests {
         // Normally this would be derived from a random nonce chosen by the client.
         let idpf = Idpf::new(&rng.gen());
 
-        let alpha = rng.gen::<[bool; 2]>().to_vec();
+        let alpha = std::iter::repeat_with(|| rng.gen())
+            .take(37)
+            .collect::<Vec<_>>();
         let beta = Field64::from(1337);
         let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
-
-        println!(" -- ");
 
         // on path
         {
@@ -233,8 +234,6 @@ mod tests {
                 assert_eq!(beta, w0 + w1);
             }
         }
-
-        println!(" -- ");
 
         // off path
         {
