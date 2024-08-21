@@ -154,12 +154,20 @@ impl Idpf {
                 s1.convert::<F>(&self.cipher)
             );
 
-            // Conversion maintains the following invariant:
+            // Conversion works as follows:
             //
-            // * If evaluation is on path, XXX
+            // * If evaluation is on path, then we `b0` and `b1` will have different values. in
+            //   which case one of the servers will add the correction `cw.w` into their share of
+            //   the output. We want the shares to sum up to `beta`.
             //
-            // * If evaluation is off path, XXX
-            cw.w = beta - s0.convert(&self.cipher) - s1.convert(&self.cipher);
+            // * If evaluation is off path, then `b0` and `b1` will have the same value, in which
+            //   case both servers will add the correction or neither will. In this case, we want
+            //   their shares to sum up to `0`.
+            //
+            // In either case, both servers will add a share. To make the on-path case work, have
+            // server 0 add `w0` and server 1 add `-w1` so that `cw.w + w0 - w1` adds up to `beta`.
+            // To make the off-path case work,
+            cw.w = beta - s0.convert(&self.cipher) + s1.convert(&self.cipher);
             correction_words.push(cw);
         }
         (correction_words, [k0, k1])
@@ -176,17 +184,24 @@ impl Idpf {
         let mut b = id;
         let mut w = F::zero();
         for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
+            // Select the next seed and control bit.
             let mut e = s.extend(&self.cipher);
             if b {
                 e.correct_with(cw);
-                w = cw.w;
-            } else {
-                w = F::zero();
             }
             (s, b) = e.into_selected(bit);
-            w += s.convert(&self.cipher);
+
+            w = if !id && !b {
+                s.convert(&self.cipher)
+            } else if !id && b {
+                cw.w + s.convert::<F>(&self.cipher)
+            } else if id && !b {
+                -s.convert::<F>(&self.cipher)
+            } else {
+                cw.w - s.convert(&self.cipher)
+            };
         }
-        println!(" {w}");
+        println!("{b}");
         (s, w)
     }
 }
