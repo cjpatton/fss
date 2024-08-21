@@ -245,5 +245,7 @@ mod tests {
                 assert_eq!(Field64::from(0), w0 + w1);
             }
         }
+
+        // XXX Add test for on path then off path
     }
 }
