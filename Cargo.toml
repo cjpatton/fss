@@ -4,6 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-aes = "0.8.4"
-prio = "0.16.6"
+prio = { version = "0.16.6", features = ["experimental"] }
 rand = "0.8.5"

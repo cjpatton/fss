@@ -1,10 +1,9 @@
 #![allow(dead_code)] // TODO Delete this line
 
-use aes::{
-    cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit},
-    Aes128,
+use prio::{
+    field::FieldElementWithInteger,
+    vdaf::xof::{IntoFieldVec, XofFixedKeyAes128Key},
 };
-use prio::field::FieldElementWithInteger;
 use rand::{
     distributions::{Distribution, Standard},
     prelude::*,
@@ -20,31 +19,22 @@ impl Distribution<Seed> for Standard {
 }
 
 impl Seed {
-    fn extend(&self, cipher: &Aes128) -> ExtendedSeed {
-        let mut blocks = [GenericArray::from(self.0), GenericArray::from(self.0)];
-        blocks[0][0] ^= 0x01;
-        blocks[1][0] ^= 0x02;
-        cipher.encrypt_blocks(&mut blocks);
-        let [mut s0, mut s1] = blocks;
+    fn extend(&self, fixed_key: &XofFixedKeyAes128Key) -> ExtendedSeed {
+        let mut out = [0; 32];
+        fixed_key.with_seed(&self.0).fill(&mut out[..]);
+        let (s0, s1) = out.split_at_mut(16);
         let b0 = if s0[0] & 0x01 == 1 { true } else { false };
         let b1 = if s1[0] & 0x01 == 1 { true } else { false };
         s0[0] &= 0xFE;
         s1[0] &= 0xFE;
         ExtendedSeed {
-            s: [Seed(s0.into()), Seed(s1.into())],
+            s: [Seed(s0.try_into().unwrap()), Seed(s1.try_into().unwrap())],
             b: [b0, b1],
         }
     }
 
-    fn convert<F: FieldElementWithInteger>(&self, cipher: &Aes128) -> F {
-        // TODO Replace this with something secure.
-        let mut block = GenericArray::from(self.0);
-        block[0] ^= 0x03;
-        cipher.encrypt_block(&mut block);
-        F::from(
-            F::Integer::try_from(u64::from_le_bytes(block[..8].try_into().unwrap()) as usize)
-                .unwrap(),
-        )
+    fn convert<F: FieldElementWithInteger>(&self, fixed_key: &XofFixedKeyAes128Key) -> F {
+        fixed_key.with_seed(&self.0).into_field_vec(1)[0]
     }
 
     fn zero() -> Seed {
@@ -95,13 +85,13 @@ struct CorrectionWord<F> {
 }
 
 struct Idpf {
-    cipher: Aes128,
+    fixed_key: XofFixedKeyAes128Key,
 }
 
 impl Idpf {
-    fn new(fixed_key: &[u8; 16]) -> Self {
+    fn new(nonce: &[u8; 16]) -> Self {
         Self {
-            cipher: Aes128::new(&GenericArray::from(*fixed_key)),
+            fixed_key: XofFixedKeyAes128Key::new(b"coolguy", nonce),
         }
     }
 
@@ -127,8 +117,8 @@ impl Idpf {
             //
             // * If evaluation is off path, then the seed and control bit should be equal to
             //  `Seed::zero()` and `!bit` respectively.
-            let mut e0 = s0.extend(&self.cipher);
-            let mut e1 = s1.extend(&self.cipher);
+            let mut e0 = s0.extend(&self.fixed_key);
+            let mut e1 = s1.extend(&self.fixed_key);
             let keep = usize::from(bit);
             let lose = 1 - keep;
             let mut cw = CorrectionWord {
@@ -163,7 +153,7 @@ impl Idpf {
             // server 0 add `w0` and server 1 add `-w1` so that `cw.w + w0 - w1` adds up to `beta`.
             // In case we're off path and both servers add the correction word, we need one to add
             // the negation.
-            cw.w = beta - s0.convert(&self.cipher) + s1.convert(&self.cipher);
+            cw.w = beta - s0.convert(&self.fixed_key) + s1.convert(&self.fixed_key);
             if b1 {
                 cw.w = -cw.w;
             }
@@ -183,7 +173,7 @@ impl Idpf {
         let mut b = id;
         for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
             // Select the next seed and control bit.
-            let mut e = s.extend(&self.cipher);
+            let mut e = s.extend(&self.fixed_key);
             if b {
                 e.correct_with(cw);
             }
@@ -193,14 +183,14 @@ impl Idpf {
         // Conversion.
         let cw_w = correction_words[alpha.len() - 1].w;
         let w = if !id && !b {
-            s.convert::<F>(&self.cipher)
+            s.convert::<F>(&self.fixed_key)
         } else if !id && b {
-            cw_w + s.convert::<F>(&self.cipher)
+            cw_w + s.convert::<F>(&self.fixed_key)
         } else if id && !b {
-            -s.convert::<F>(&self.cipher)
+            -s.convert::<F>(&self.fixed_key)
         // id && b
         } else {
-            -(cw_w + s.convert(&self.cipher))
+            -(cw_w + s.convert(&self.fixed_key))
         };
 
         (s, w)
@@ -220,7 +210,7 @@ mod tests {
         let idpf = Idpf::new(&rng.gen());
 
         let alpha = std::iter::repeat_with(|| rng.gen())
-            .take(10)
+            .take(20)
             .collect::<Vec<_>>();
         let beta = Field64::from(1337);
         let (cw, [k0, k1]) = idpf.gen(&alpha, beta);
