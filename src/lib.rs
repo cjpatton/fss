@@ -23,13 +23,13 @@ impl Seed {
         let mut out = [0; 32];
         fixed_key.with_seed(&self.0).fill(&mut out[..]);
         let (s0, s1) = out.split_at_mut(16);
-        let b0 = if s0[0] & 0x01 == 1 { true } else { false };
-        let b1 = if s1[0] & 0x01 == 1 { true } else { false };
+        let t0 = if s0[0] & 0x01 == 1 { true } else { false };
+        let t1 = if s1[0] & 0x01 == 1 { true } else { false };
         s0[0] &= 0xFE;
         s1[0] &= 0xFE;
         ExtendedSeed {
             s: [Seed(s0.try_into().unwrap()), Seed(s1.try_into().unwrap())],
-            b: [b0, b1],
+            t: [t0, t1],
         }
     }
 
@@ -68,26 +68,26 @@ impl std::ops::BitXorAssign<Seed> for Seed {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ExtendedSeed {
     s: [Seed; 2],
-    b: [bool; 2],
+    t: [bool; 2],
 }
 
 impl ExtendedSeed {
     fn correct_with<F>(&mut self, cw: &CorrectionWord<F>) {
         self.s[0] ^= cw.s;
-        self.b[0] ^= cw.b[0];
+        self.t[0] ^= cw.t[0];
         self.s[1] ^= cw.s;
-        self.b[1] ^= cw.b[1];
+        self.t[1] ^= cw.t[1];
     }
 
     fn into_selected(self, bit: bool) -> (Seed, bool) {
-        (self.s[bit as usize], self.b[bit as usize])
+        (self.s[bit as usize], self.t[bit as usize])
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct CorrectionWord<F> {
     s: Seed,
-    b: [bool; 2],
+    t: [bool; 2],
     w: F,
 }
 
@@ -112,8 +112,8 @@ impl Idpf {
         let k1 = rng.gen::<Seed>();
         let mut s0 = k0;
         let mut s1 = k1;
-        let mut b0 = false;
-        let mut b1 = true;
+        let mut t0 = false;
+        let mut t1 = true;
         let mut correction_words = Vec::with_capacity(alpha.len());
         for bit in alpha.iter().copied() {
             // Selection maintains the following invariant, after correction:
@@ -130,21 +130,21 @@ impl Idpf {
             let lose = 1 - keep;
             let mut cw = CorrectionWord {
                 s: e0.s[lose] ^ e1.s[lose],
-                b: [!bit ^ e0.b[0] ^ e1.b[0], bit ^ e0.b[1] ^ e1.b[1]],
+                t: [!bit ^ e0.t[0] ^ e1.t[0], bit ^ e0.t[1] ^ e1.t[1]],
                 w: F::zero(), // computed in the next step
             };
 
             // Correct and select the next seed and control bit.
-            if b0 {
+            if t0 {
                 e0.correct_with(&cw);
             }
-            if b1 {
+            if t1 {
                 e1.correct_with(&cw);
             }
             s0 = e0.s[keep];
             s1 = e1.s[keep];
-            b0 = e0.b[keep];
-            b1 = e1.b[keep];
+            t0 = e0.t[keep];
+            t1 = e1.t[keep];
 
             // Conversion works as follows:
             //
@@ -161,7 +161,7 @@ impl Idpf {
             // In case we're off path and both servers add the correction word, we need one to add
             // the negation.
             cw.w = beta - s0.convert(&self.fixed_key) + s1.convert(&self.fixed_key);
-            if b1 {
+            if t1 {
                 cw.w = -cw.w;
             }
             correction_words.push(cw);
@@ -177,25 +177,25 @@ impl Idpf {
         alpha: &[bool],
     ) -> (Seed, F) {
         let mut s = *k;
-        let mut b = id;
+        let mut t = id;
         for (cw, bit) in correction_words.iter().zip(alpha.iter().copied()) {
             // Select the next seed and control bit.
             let mut e = s.extend(&self.fixed_key);
-            if b {
+            if t {
                 e.correct_with(cw);
             }
-            (s, b) = e.into_selected(bit);
+            (s, t) = e.into_selected(bit);
         }
 
         // Conversion.
         let cw_w = correction_words[alpha.len() - 1].w;
-        let w = if !id && !b {
+        let w = if !id && !t {
             s.convert::<F>(&self.fixed_key)
-        } else if !id && b {
+        } else if !id && t {
             cw_w + s.convert::<F>(&self.fixed_key)
-        } else if id && !b {
+        } else if id && !t {
             -s.convert::<F>(&self.fixed_key)
-        // id && b
+        // id && t
         } else {
             -(cw_w + s.convert(&self.fixed_key))
         };
